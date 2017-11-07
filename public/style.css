@@ -31,6 +31,10 @@ h1 {
   float: left;
 }
 
+li.registration {
+  float: right;
+}
+
 .navigation .logout {
   float: right;
 }
