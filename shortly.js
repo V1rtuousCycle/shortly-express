@@ -2,7 +2,7 @@ var express = require('express');
 var util = require('./lib/utility');
 var partials = require('express-partials');
 var bodyParser = require('body-parser');
-
+var session = require('express-session');
 
 var db = require('./app/config');
 var Users = require('./app/collections/users');
@@ -22,55 +22,61 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static(__dirname + '/public'));
 
+app.use(session({
+  secret: 'keyboard cat',
+  resave: false,
+  saveUninitialized: true,
+  cookie: {}
+}));
 
-app.get('/',
-function(req, res) {
-  res.render('index');
-});
-
-app.get('/create',
-function(req, res) {
-  res.render('index');
-});
-
-app.get('/links',
-function(req, res) {
-  Links.reset().fetch().then(function(links) {
-    res.status(200).send(links.models);
+app.get('/', util.checkUser,
+  function(req, res) {
+    res.render('index');
   });
-});
 
-app.post('/links',
-function(req, res) {
-  var uri = req.body.url;
+app.get('/create', util.checkUser,
+  function(req, res) {
+    res.render('index');
+  });
 
-  if (!util.isValidUrl(uri)) {
-    console.log('Not a valid url: ', uri);
-    return res.sendStatus(404);
-  }
+app.get('/links', util.checkUser,
+  function(req, res) {
+    Links.reset().fetch().then(function(links) {
+      res.status(200).send(links.models);
+    });
+  });
 
-  new Link({ url: uri }).fetch().then(function(found) {
-    if (found) {
-      res.status(200).send(found.attributes);
-    } else {
-      util.getUrlTitle(uri, function(err, title) {
-        if (err) {
-          console.log('Error reading URL heading: ', err);
-          return res.sendStatus(404);
-        }
+app.post('/links', util.checkUser,
+  function(req, res) {
+    var uri = req.body.url;
 
-        Links.create({
-          url: uri,
-          title: title,
-          baseUrl: req.headers.origin
-        })
-        .then(function(newLink) {
-          res.status(200).send(newLink);
-        });
-      });
+    if (!util.isValidUrl(uri)) {
+      console.log('Not a valid url: ', uri);
+      return res.sendStatus(404);
     }
+
+    new Link({ url: uri }).fetch().then(function(found) {
+      if (found) {
+        res.status(200).send(found.attributes);
+      } else {
+        util.getUrlTitle(uri, function(err, title) {
+          if (err) {
+            console.log('Error reading URL heading: ', err);
+            return res.sendStatus(404);
+          }
+
+          Links.create({
+            url: uri,
+            title: title,
+            baseUrl: req.headers.origin
+          })
+            .then(function(newLink) {
+              res.status(200).send(newLink);
+            });
+        });
+      }
+    });
   });
-});
 
 /************************************************************/
 // Write your authentication routes here
@@ -84,12 +90,53 @@ app.get('/login', function(req, res) {
 });
 
 app.post('/signup', function(req, res) {
-  console.log('request body--->', req.body);
-  res.end('signup post')
+  new User({ username: req.body.username})
+    .fetch().
+    then(function(user) {
+      console.log('value of found', user);
+      if (!user) {
+        var newUser = new User({
+          'username': req.body.username,
+          'password': this.hashPassword
+        });
+        newUser.save()
+          .then(function(newUser) {
+            util.createSession(req, res, newUser);
+          });
+
+      } else {
+        res.redirect('/signup');
+        console.log('accoount already exists.');
+      }
+    });
 });
 
 app.post('/login', function(req, res) {
-  res.end('login post');
+
+  new User({username: req.body.username})
+    .fetch()
+    .then(function(user) {
+      if (!user) {
+        res.redirect('/login');
+      } else {
+      //check password
+        user.comparePassword(password, function(match) {
+          if (match) {
+            util.createSession(req, res, user);
+            res.redirect('/');
+          } else {
+            console.log('wrong password');
+            res.redirect('/login');
+          }
+        });
+      }
+    });
+});
+
+app.get('/logout', function(req, res) {
+  delete req.session;
+  // console.log("req.session", req.session);
+  res.redirect('/login');
 });
 /************************************************************/
 // Handle the wildcard route last - if all other routes fail
